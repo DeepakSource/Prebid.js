@@ -5,14 +5,16 @@
 
 'use strict';
 
-
 const fs = require('fs');
 const blockLoader = require('block-loader');
 const getAdapters = require('./getAdapters');
 
 const adapters = getAdapters();
 const files = fs.readdirSync('src/adapters').map((file) => file.replace(/\.[^/.]+$/, ''));
-const adapterNames = adapters.map(getNames).filter(getUniques);
+const adapterNames = adapters.filter(getStandardAdapters).filter(getUniques);
+const customAdapters = adapters.map(getCustomAdapters).filter( adapter =>{
+  return !!adapter;
+});
 const aliases = adapters.filter(getAliases);
 const videoAdapters = adapters.filter(getVideoAdapters).map(getNames);
 
@@ -53,8 +55,12 @@ function insertAdapters() {
     return `var ${adapterName(name)} = require('./adapters/${name}.js');
     exports.registerBidAdapter(new ${adapterName(name)}${useCreateNew(name)}(), '${name}');\n`;
   })
+    .concat(customAdapters.map(adapter =>{
+      return `let ${adapter.name} = require('${adapter.srcPath}');
+      exports.registerBidAdapter(new ${adapter.name}, '${adapter.name}');\n`;
+    }))
     .concat(aliases.map(adapter => {
-      const name = Object.keys(adapter)[0];
+      const name = getNameStr(adapter);
       return `exports.aliasBidAdapter('${name}','${adapter[name].alias}');\n`;
     }))
     .concat(`exports.videoAdapters = ${JSON.stringify(videoAdapters)};`)
@@ -100,7 +106,7 @@ function getUniques(value, index, self) {
  */
 function getNames(adapter) {
   // if `length` then `adapter` is a string, otherwise an object
-  return adapter.length ? adapter : Object.keys(adapter)[0];
+  return adapter.length ? adapter : getNameStr(adapter);
 }
 
 /**
@@ -109,7 +115,7 @@ function getNames(adapter) {
  * @returns {*}
  */
 function getAliases(adapter) {
-  const name = Object.keys(adapter)[0];
+  const name = getNameStr(adapter);
   return adapter && name && adapter[name].alias;
 }
 
@@ -117,9 +123,44 @@ function getAliases(adapter) {
  * Returns adapter objects that support video
  */
 function getVideoAdapters(adapter) {
-  const name = Object.keys(adapter)[0];
+  const name = getNameStr(adapter);
   return adapter && name && adapter[name].supportedMediaTypes
     && adapter[name].supportedMediaTypes.includes('video');
 }
+
+function getNameStr(adapter) {
+  return Object.keys(adapter)[0];
+}
+
+function getStandardAdapters(adapter) {
+  if(typeof adapter === 'string'){
+    return adapter;
+  }
+}
+
+function getCustomAdapters(adapter) {
+  const srcPath = getSrcPath(adapter);
+  if(srcPath === '') {
+    return;
+  }
+  if(!fileExists(srcPath)){
+    console.warn(`Not able to locate adapter at: ${srcPath} continuing`);
+    return;
+  }
+  return {
+    name : getNames(adapter),
+    srcPath : srcPath
+  };
+}
+
+function getSrcPath(adapter) {
+  const name = getNameStr(adapter);
+  return name && adapter[name].srcPath ? adapter[name].srcPath : '';
+}
+
+function fileExists(path) {
+  return fs.existsSync(path);
+}
+
 
 module.exports = blockLoader(options);
